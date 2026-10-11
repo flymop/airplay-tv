@@ -183,8 +183,10 @@ static void _video_report_size(void *cls, float *w_src, float *h_src, float *w, 
 static void _display_pin(void *cls, char *pin) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
     
-    /* certain senders trigger pair-pin-start even when we advertise no auth */
-    if (!ctx->require_pin) return;
+    /* A sender may request PIN pairing even when we do not require it.
+     * UxPlay has already generated a real challenge: always show its code so
+     * the sender's PIN prompt can be completed. require_pin controls whether
+     * this receiver demands pairing, not whether a requested code is visible. */
 
     JNIEnv *env = _get_env(ctx);
     if (!env) return;
@@ -218,7 +220,11 @@ static void _video_reset(void *cls, reset_type_t t) {
         raop_remove_hls_connections(ctx->raop);
     }
 }
-static void _audio_flush(void *cls) { LOGI("audio_flush"); }
+static void _audio_flush(void *cls) {
+    android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;
+    LOGI("audio_flush: resetting decoder and playback timeline");
+    audio_engine_flush(ctx->audio_engine);
+}
 
 static void _audio_stop_coverart_rendering(void *cls) {
     android_callback_ctx_t *ctx = (android_callback_ctx_t *)cls;

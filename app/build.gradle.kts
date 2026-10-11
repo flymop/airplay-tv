@@ -26,9 +26,8 @@ android {
             }
         }
 
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86_64"))
-        }
+        // ABI selection is defined by splits below; setting ndk.abiFilters as
+        // well conflicts with ABI splits in the Android Gradle plugin.
     }
 
     buildTypes {

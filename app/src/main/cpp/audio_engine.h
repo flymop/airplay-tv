@@ -36,6 +36,11 @@ bool audio_engine_start(AudioEngine *engine);
 /* pause playout, releases audio output devices while paused; idempotent */
 void audio_engine_pause(AudioEngine *engine);
 
+/* discard queued decoder/PCM/output data after RAOP FLUSH; same receive thread as
+ * audio_engine_decode(), never concurrent with decode() or destroy(). Preserves
+ * the requested running/paused state and negotiated audio format. */
+void audio_engine_flush(AudioEngine *engine);
+
 /* refresh + copy packed debug struct into dst; false if engine NULL or dstLen too small */
 bool audio_engine_get_debug(AudioEngine *engine, void *dst, size_t dstLen);
 

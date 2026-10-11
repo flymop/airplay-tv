@@ -1,0 +1,57 @@
+diff --git a/lib/raop_buffer.c b/lib/raop_buffer.c
+--- a/lib/raop_buffer.c
++++ b/lib/raop_buffer.c
+@@ -61,0 +62 @@
++    unsigned int resend_limit;
+@@ -88,0 +90 @@
++    raop_buffer->resend_limit = RAOP_BUFFER_LENGTH;
+@@ -226,0 +229,6 @@
++void
++raop_buffer_set_resend_limit(raop_buffer_t *raop_buffer, unsigned int packets) {
++    raop_buffer->resend_limit = packets && packets < RAOP_BUFFER_LENGTH
++        ? packets : RAOP_BUFFER_LENGTH;
++}
++
+@@ -239,12 +247,12 @@
+-    /* Get the first buffer entry for inspection */
+-    raop_buffer_entry_t *entry = &raop_buffer->entries[raop_buffer->first_seqnum % RAOP_BUFFER_LENGTH];
+-    if (no_resend) {
+-        /* If we do no resends, always return the first entry */
+-    } else if (!entry->filled) {
+-        /* Check how much we have space left in the buffer */
+-        if (entry_count < RAOP_BUFFER_LENGTH) {
+-            /* Return nothing and hope resend gets on time */
+-            return NULL;
+-        }
+-        /* Risk of buffer overrun, return empty buffer */
+-    }
++    /* Wait briefly for retransmissions, then skip expired holes in this call.
++     * Returning NULL after skipping one hole makes the caller wait for another
++     * datagram even when playable packets are already buffered. */
++    raop_buffer_entry_t *entry = NULL;
++    while (entry_count > 0) {
++        entry = &raop_buffer->entries[raop_buffer->first_seqnum % RAOP_BUFFER_LENGTH];
++        if (entry->filled) break;
++        if (!no_resend && entry_count < (int) raop_buffer->resend_limit) return NULL;
++        raop_buffer->first_seqnum++;
++        entry_count--;
++    }
++    if (entry_count <= 0) return NULL;
+@@ -254,3 +261,0 @@
+-    if (!entry->filled) {
+-        return NULL;
+-    }
+diff --git a/lib/raop_buffer.h b/lib/raop_buffer.h
+--- a/lib/raop_buffer.h
++++ b/lib/raop_buffer.h
+@@ -34,0 +35,2 @@
++/* Set before starting the receive thread. Zero restores the default window. */
++void raop_buffer_set_resend_limit(raop_buffer_t *raop_buffer, unsigned int packets);
+diff --git a/lib/raop_rtp.c b/lib/raop_rtp.c
+--- a/lib/raop_rtp.c
++++ b/lib/raop_rtp.c
+@@ -671,0 +672,4 @@
++    /* AAC-ELD mirroring cannot wait for the 256-packet music window (~2.8s).
++     * Keep up to eight sequence slots (~87ms at 480/44100) for retransmits;
++     * the PCM jitter buffer covers this while later packets keep flowing. */
++    raop_buffer_set_resend_limit(raop_rtp->buffer, *ct == 8 ? 8 : 0);

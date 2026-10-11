@@ -129,6 +129,15 @@ public:
     // jitter calculations; producer-thread only (same as observe())
     void reanchor() { mHaveBase = false; }
 
+    // New playback segment: old jitter history must not delay the next episode.
+    // Producer-thread only, like observe(). Output buffer size remains valid.
+    void reset() {
+        std::fill_n(mHist, NBUCKETS, int64_t{0});
+        mBaseNs = 0;
+        mHaveBase = false;
+        mTuned.store(mFloor, std::memory_order_relaxed);
+    }
+
     // latest tuned cushion in samples; any thread
     size_t target() const { return mTuned.load(std::memory_order_relaxed); }
 
@@ -220,6 +229,12 @@ public:
     // producer: push samples
     void write(const int16_t *pcm, size_t samples, int64_t ptsNs) {
         if (samples == 0) return;
+        // flushAndReprime() may run while the decoder is active (pause/resume).
+        // Reset producer-owned timing here, not from the output/control thread.
+        if (mResetTiming.exchange(false, std::memory_order_acquire)) {
+            mExpectedPtsNs = 0;
+            mTracker.reset();
+        }
         // pts 0 = sender clock not NTP synced yet
         if (ptsNs == 0) {
             mRing.write(pcm, samples);
@@ -232,7 +247,7 @@ public:
         if (mUnderran.exchange(false, std::memory_order_relaxed)) {
             mExpectedPtsNs = ptsNs;
         }
-        const int64_t gapNs = ptsNs - mExpectedPtsNs;
+        const int64_t gapNs = mExpectedPtsNs == 0 ? 0 : ptsNs - mExpectedPtsNs;
 
         // large gap: possible discontinuity or clock shift. reanchor() must precede
         // observe() so the reset applies to this observation
@@ -321,13 +336,20 @@ public:
 
     // rebuild prebuffer cushion before resuming, e.g. after output stream restart;
     // must not run concurrently with read()
-    void reprime() { mPriming = true; }
+    void reprime() {
+        mPriming = true;
+        mPrimeSilenceFrames = 0;
+    }
 
     // drop buffered audio + rebuild cushion, so resume after pause doesn't play stale
     // tail; only while output callback is stopped (skip() is consumer-side)
     void flushAndReprime() {
         mRing.skip(mRing.available());
-        mPriming = true;
+        reprime();
+        mLastTrimBlockNs = 0;
+        mAboveCapSinceNs = 0;
+        mUnderran.store(false, std::memory_order_relaxed);
+        mResetTiming.store(true, std::memory_order_release);
     }
 
     // debug snapshot: backlog + tuned cushion (ms) + counters; reads only atomics, any thread
@@ -380,6 +402,7 @@ private:
     int64_t mLastTrimBlockNs = 0;        // consumer-only: last trim/underrun time (trim throttle)
     int64_t mAboveCapSinceNs = 0;        // consumer-only: when backlog first exceeded cap (0 = under)
     std::atomic<bool> mUnderran{false};  // consumer->producer: underrun happened
+    std::atomic<bool> mResetTiming{false}; // control->producer: new playback segment
 
     int64_t mExpectedPtsNs = 0;          // presentation time expected at write head
 };

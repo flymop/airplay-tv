@@ -3,7 +3,6 @@
  *   decoding (AAC/ALAC) -> timing/jitter buffer (spike absorption + PTS sync) -> PCM output
  */
 
-#include <jni.h>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -48,7 +47,7 @@ struct CodecFormat {
 
 struct AudioEngine {
     AudioEngine(std::shared_ptr<LogSink> log, int sampleRate, int channels)
-        : mLog(std::move(log)), mSampleRate(sampleRate), mChannels(channels) {
+        : mSampleRate(sampleRate), mChannels(channels), mLog(std::move(log)) {
         mQueued[ctIndex(CT_ALAC)].store(CodecFormat{352}, std::memory_order_relaxed);
         mQueued[ctIndex(CT_AAC_LC)].store(CodecFormat{1024}, std::memory_order_relaxed);
         mQueued[ctIndex(CT_AAC_ELD)].store(CodecFormat{480}, std::memory_order_relaxed);
@@ -85,6 +84,25 @@ struct AudioEngine {
         if (mOutput && mOutputActive) {
             mOutput->stop();
             mOutputActive = false;
+        }
+    }
+
+    // RAOP dispatches FLUSH and audio_process on the same receive thread.
+    void flush() {
+        std::lock_guard<std::mutex> lk(mRebuildLock);
+        if (mOutputActive) {
+            mOutput->stop();  // also discards PCM already queued to the device
+            mOutputActive = false;
+        }
+        // Join the MediaCodec drain thread before clearing its PCM destination.
+        // Recreate on the next packet so no pre-FLUSH compressed audio survives.
+        mDecoder = {};
+        mRetryAtNs = 0;
+        mDecLatency.setHeld(0);
+        if (mTimeline) mTimeline->flushAndReprime();
+        if (mOutput && mRunning) {
+            mOutputActive = mOutput->start();
+            if (!mOutputActive) mLog->error("Audio output restart failed after FLUSH");
         }
     }
 
@@ -138,13 +156,14 @@ struct AudioEngine {
         const bool changed = ct != mDecoder.ct || wantConfig != mDecoder.format;
         if (changed || (!mDecoder.decoder && monoNs() >= mRetryAtNs)) {
             mDecoder = {}; // release old decoder first to free resources
+            // Re-anchor before constructing the new decoder: its drain thread may
+            // write to the tracker as soon as construction completes.
+            mTimeline->reanchorTracker();
             mDecoder = {ct, wantConfig,
                         makeDecoder(ct, wantConfig.spf, mSampleRate, mChannels, *mTimeline,
                                     mDecLatency, *mLog, mApplied->forceSwAlac,
                                     mApplied->realtimePriority, mApplied->lowLatency)};
             mRetryAtNs = mDecoder.decoder ? 0 : monoNs() + DECODER_RETRY_NS;
-            // codec switch is definitely a discontinuity
-            mTimeline->reanchorTracker();
         }
         if (mDecoder.decoder && !mDecoder.decoder->decode(data, len, ptsNs))
             mDecodeErrors.fetch_add(1, std::memory_order_relaxed);
@@ -240,6 +259,10 @@ bool audio_engine_start(AudioEngine *engine) {
 
 void audio_engine_pause(AudioEngine *engine) {
     if (engine) engine->pause();
+}
+
+void audio_engine_flush(AudioEngine *engine) {
+    if (engine) engine->flush();
 }
 
 bool audio_engine_get_debug(AudioEngine *engine, void *dst, size_t dstLen) {

@@ -1,0 +1,7 @@
+diff --git a/lib/raop_rtp.c b/lib/raop_rtp.c
+--- a/lib/raop_rtp.c
++++ b/lib/raop_rtp.c
+@@ -320,0 +321,3 @@
++        /* Discard the previous segment, including packets waiting for a resend.
++         * This runs on the receive thread, before any new audio_process call. */
++        raop_buffer_flush(raop_rtp->buffer, flush);

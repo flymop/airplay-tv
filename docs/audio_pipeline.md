@@ -76,3 +76,16 @@ Because the sender's crystal clock (iPhone) and receiver's hardware DAC clock (A
 * **Linear Android Conversion**:
   $$\text{Volume Frac} = \frac{\text{dB} + 30.0}{30.0} \quad (\text{clamped between } 0.0 \text{ and } 1.0)$$
 * **Bi-directional DACP Sync**: Changing volume using the TV remote or Android TV volume keys sends DACP updates back to the iOS device, keeping the volume sliders synchronized.
+
+## 5. Playback Recovery
+
+AAC-ELD mirroring waits up to eight RTP sequence slots for retransmissions
+(about 87 ms at 480 samples/frame), then skips expired gaps and releases queued
+audio. This prevents a lost packet from blocking playback for the full 256-slot
+window (about 2.8 seconds). Other formats retain the default window. The limit
+depends on sequence progress; a complete delivery pause can still cause underruns.
+
+On RAOP `FLUSH`, the receive thread clears the RTP queue and stops audio output.
+The engine joins the decoder thread before discarding PCM, then resets expected
+PTS, jitter history, and priming state. Output resumes only if it was running.
+Episode changes without `FLUSH` use the normal timestamp and retransmission logic.

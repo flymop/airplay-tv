@@ -48,6 +48,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Test native audio playback boundaries
+        run: bash tests/native/run_tests.sh
+
       - name: Build Release APK
         run: ./gradlew assembleRelease --no-daemon
 
